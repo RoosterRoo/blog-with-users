@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship
 from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 
 import forms
-from forms import CreatePostForm, RegisterForm, LoginForm
+from forms import CreatePostForm, RegisterForm, LoginForm, CommentForm
 from flask_gravatar import Gravatar
 
 from functools import wraps
@@ -31,6 +31,14 @@ def load_user(user_id):
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///blog.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+gravatar = Gravatar(app,
+                    size=100,
+                    rating='g',
+                    default='retro',
+                    force_default=False,
+                    force_lower=False,
+                    use_ssl=False,
+                    base_url=None)
 
 
 # CONFIGURE TABLES
@@ -47,6 +55,8 @@ class BlogPost(db.Model):
     author = relationship("User", back_populates="posts")
     author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
 
+    comments = relationship("Comment", back_populates="parent_post")
+
 
 class User(UserMixin, db.Model):
     __tablename__ = 'users'
@@ -55,6 +65,19 @@ class User(UserMixin, db.Model):
     name = db.Column(db.String(250), nullable=False)
     password = db.Column(db.String(250), nullable=False)
     posts = relationship("BlogPost", back_populates="author")
+    comments = relationship("Comment", back_populates="parent_author")
+
+
+class Comment(db.Model):
+    __tablename__ = "comments"
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.Text, nullable=False)
+
+    post_id = db.Column(db.Integer, db.ForeignKey("blog_posts.id"))
+    parent_post = relationship("BlogPost", back_populates="comments")
+
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    parent_author = relationship("User", back_populates="comments")
 
 
 # with app.app_context() as context:
@@ -120,10 +143,24 @@ def logout():
     return redirect(url_for('get_all_posts'))
 
 
-@app.route("/post/<int:post_id>")
+@app.route("/post/<int:post_id>", methods=['GET', 'POST'])
+@login_required
 def show_post(post_id):
+    comment_form = CommentForm()
     requested_post = BlogPost.query.get(post_id)
-    return render_template("post.html", post=requested_post)
+    if comment_form.validate_on_submit():
+        if not current_user.is_authenticated:
+            flash("Please login to save your comments")
+            return redirect(url_for('login'))
+
+        new_comment = Comment(
+            text=comment_form.comment.data,
+            parent_post=requested_post,
+            parent_author=current_user
+        )
+        db.session.add(new_comment)
+        db.session.commit()
+    return render_template("post.html", post=requested_post, comment_form=comment_form)
 
 
 @app.route("/about")
